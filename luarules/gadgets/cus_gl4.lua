@@ -261,6 +261,7 @@ do --save a ton of locals
 	local OPTION_MODELSFOG        = 1024
 	local OPTION_TREEWIND         = 2048
 	local OPTION_PBROVERRIDE      = 4096
+	local OPTION_TREADS_LEG       = 8192
 
 	local defaultBitShaderOptions = OPTION_SHADOWMAPPING + OPTION_NORMALMAPPING  + OPTION_MODELSFOG
 
@@ -275,6 +276,11 @@ do --save a ton of locals
 			baseVertexDisplacement = 0.0,
 			brightnessFactor = 1.5,
 		},
+		legunit = {
+			bitOptions = defaultBitShaderOptions + OPTION_VERTEX_AO + OPTION_FLASHLIGHTS + OPTION_TREADS_LEG + OPTION_HEALTH_TEXTURING + OPTION_HEALTH_DISPLACE,
+			baseVertexDisplacement = 0.0,
+			brightnessFactor = 1.5,
+		},
 		armscavenger = {
 			bitOptions = defaultBitShaderOptions + OPTION_VERTEX_AO + OPTION_FLASHLIGHTS + OPTION_TREADS_ARM + OPTION_HEALTH_TEXTURING + OPTION_HEALTH_DISPLACE,
 			baseVertexDisplacement = 0.4,
@@ -282,6 +288,11 @@ do --save a ton of locals
 		},
 		corscavenger = {
 			bitOptions = defaultBitShaderOptions + OPTION_VERTEX_AO + OPTION_FLASHLIGHTS + OPTION_TREADS_CORE + OPTION_HEALTH_TEXTURING + OPTION_HEALTH_DISPLACE,
+			baseVertexDisplacement = 0.4,
+			brightnessFactor = 1.5,
+		},
+		legscavenger = {
+			bitOptions = defaultBitShaderOptions + OPTION_VERTEX_AO + OPTION_FLASHLIGHTS + OPTION_TREADS_LEG + OPTION_HEALTH_TEXTURING + OPTION_HEALTH_DISPLACE,
 			baseVertexDisplacement = 0.4,
 			brightnessFactor = 1.5,
 		},
@@ -949,21 +960,23 @@ local function initBinsAndTextures()
 	Spring.Echo("[CUS GL4] Init Unit bins")
 	for unitDefID, unitDef in pairs(UnitDefs) do
 		if unitDef.model then
-			objectDefToUniformBin[unitDefID] = "otherunit"
-			if unitDef.name:sub(1,3) == 'arm' then
-				objectDefToUniformBin[unitDefID] = 'armunit'
-			elseif 	unitDef.name:sub(1,3) == 'cor' then
-				objectDefToUniformBin[unitDefID] = 'corunit'
-			elseif 	unitDef.name:sub(1,6) == 'leggat' then
-				objectDefToUniformBin[unitDefID] = 'armunit'
-			elseif 	unitDef.name:sub(1,7) == 'legrail' then
-				objectDefToUniformBin[unitDefID] = 'armunit'
-			elseif 	unitDef.name:sub(1,6) == 'legstr' then
-				objectDefToUniformBin[unitDefID] = 'armunit'
-			elseif 	unitDef.name:sub(1,3) == 'leg' then
-				objectDefToUniformBin[unitDefID] = 'corunit'
-			end
+			local lowercasetex1 = string.lower(unitDef.model.textures.tex1 or "")
+			local lowercasetex2 = string.lower(unitDef.model.textures.tex2 or "")
 			local normalTex = GetNormal(unitDef, nil)
+			local lowercasenormaltex = string.lower(normalTex or "")
+
+			-- bin units according to what faction's texture they use
+			local factionBinTag = lowercasetex1:sub(1,3)
+
+			objectDefToUniformBin[unitDefID] = "otherunit"
+			if factionBinTag == 'arm' then
+				objectDefToUniformBin[unitDefID] = 'armunit'
+			elseif factionBinTag == 'cor' then
+				objectDefToUniformBin[unitDefID] = 'corunit'
+			elseif factionBinTag == 'leg' then
+				objectDefToUniformBin[unitDefID] = 'legunit'
+			end
+
 			local textureTable = {
 				--%-102:0 = featureDef 102 s3o tex1
 				[0] = string.format("%%%s:%i", unitDefID, 0),
@@ -979,11 +992,6 @@ local function initBinsAndTextures()
 				[10] = noisetex3dcube,
 				--[10] = envLUT,
 			}
-
-			local lowercasetex1 = string.lower(unitDef.model.textures.tex1 or "")
-			local lowercasetex2 = string.lower(unitDef.model.textures.tex2 or "")
-			local lowercasenormaltex = string.lower(normalTex or "")
-
 
 			local wreckTex1 =
 					(lowercasetex1:find("arm_color", nil, true) and "unittextures/Arm_wreck_color.dds") or
@@ -1011,10 +1019,12 @@ local function initBinsAndTextures()
 				textureTable[3] = wreckTex1
 				textureTable[4] = wreckTex2
 				textureTable[5] = wreckNormalTex
-				if unitDef.name:sub(1,3) == 'arm' then
+				if factionBinTag == 'arm' then
 					objectDefToUniformBin[unitDefID] = 'armscavenger'
-				elseif 	unitDef.name:sub(1,3) == 'cor' then
+				elseif factionBinTag == 'cor' then
 					objectDefToUniformBin[unitDefID] = 'corscavenger'
+				elseif factionBinTag == 'leg' then
+					objectDefToUniformBin[unitDefID] = 'legscavenger'
 				end
 			elseif unitDef.name:find("raptor", nil, true) or unitDef.name:find("raptor_hive", nil, true) then
 				textureTable[5] = wreckAtlases['raptor'][1]
@@ -1363,9 +1373,6 @@ local function RemoveObjectFromBin(objectID, objectDefID, texKey, shader, flag, 
 					unitDrawBinsFlagShaderTexKey.objectsArray[objectIndex] = objectIDatEnd -- Bring the last objectID here
 					unitDrawBinsFlagShaderTexKey.numobjects = numobjects -1
 				end
-			else
-				--Spring.Echo("Failed to find texKey for", objectID, objectDefID, texKey, shader, flag, uniformBinID)
-				--	Spring.Debug.TableEcho(textures)
 			end
 		else
 			if debugmode then Spring.Echo("Failed to find uniformBinID for", objectID, objectDefID, texKey, shader, flag, uniformBinID) end
@@ -1466,8 +1473,6 @@ local function RemoveObject(objectID, reason) -- we get pos/neg objectID here
 		-- processedFeatures[-1 * objectID] = nil
 		Spring.SetFeatureEngineDrawMask(-1 * objectID, 255)
 	end
-
-	--Spring.Debug.TableEcho(unitDrawBins)
 end
 
 local spGetUnitIsBeingBuilt = Spring.GetUnitIsBeingBuilt
@@ -1709,33 +1714,6 @@ local function initGL4()
 	initiated = true
 end
 
-local function tableEcho(data, name, indent, tableChecked)
-	name = name or "TableEcho"
-	indent = indent or ""
-	if not tableChecked and type(data) ~= "table" then
-		Spring.Echo(indent .. name, data)
-		return
-	end
-	if type (name) == "table" then
-		name = '<table>'
-	end
-	Spring.Echo(indent .. name .. " = {")
-	local newIndent = indent .. "    "
-	for name, v in pairs(data) do
-		local ty = type(v)
-		if ty == "table" then
-			tableEcho(v, name, newIndent, true)
-		elseif ty == "boolean" then
-			Spring.Echo(newIndent .. name .. " = " .. (v and "true" or "false"))
-		elseif ty == "string" or ty == "number" then
-			Spring.Echo(newIndent .. name .. " = " .. v)
-		else
-			Spring.Echo(newIndent .. name .. " = ", v)
-		end
-	end
-	Spring.Echo(indent .. "},")
-end
-
 local manualReload = false -- Indicates wether the first round of getting units should grab all instead of delta
 
 local function ReloadCUSGL4(optName, line, words, playerID)
@@ -1954,7 +1932,7 @@ function gadget:Initialize()
 end
 
 function gadget:Shutdown()
-	if debugmode then tableEcho(unitDrawBins, 'unitDrawBins') end
+	if debugmode then Spring.Echo(unitDrawBins, 'unitDrawBins') end
 
 	for unitID, _ in pairs(overriddenUnits) do
 		RemoveObject(unitID, "shutdown")
