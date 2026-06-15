@@ -12,6 +12,7 @@ function widget:GetInfo()
 		license = "GNU GPL, v2 or later",
 		layer = 1000,
 		enabled = true,
+		handler = true,
 	}
 end
 
@@ -36,13 +37,24 @@ bind sc_\ 	stateprefs_clearunit
 
 --]]------------------------------------------------------------------------------
 
-local unitName = {}
+local uDefID2UnitName = {}
 for udid, ud in pairs(UnitDefs) do
-	unitName[udid] = ud.name
+	uDefID2UnitName[udid] = ud.name
 end
 
 local unitSet = {}
 
+local clearSound = 'LuaUI/Sounds/switchoff.wav'
+local CMDTYPE_ICON_MODE = CMDTYPE.ICON_MODE
+local isRecordPressed = false
+local isClearPressed = false
+local spawnInitialFrame = Game.spawnInitialFrame
+local spawnWarpInFrame = Game.spawnWarpInFrame
+local spectatingState = select(1, Spring.GetSpectatingState())
+local CMD_WANT_CLOAK = GameCMD.WANT_CLOAK
+
+
+-------------------------------------------------------------------------------------------
 -- The config was previously using a seperate file, but after a bug with this file
 -- it was decided to simply use the widgetHandler shared config instead.
 local function migrateOldConfig()
@@ -69,15 +81,18 @@ end
 
 function widget:SetConfigData(data)
 	unitSet = data
+
+	-- handle porting of config from old auto cloak widget, can be removed after some time (implemented 2026-06)
+	if widgetHandler.configData["Auto Cloak Units"] and widgetHandler.configData["Auto Cloak Units"].unitdefConfig then
+		for unitName, cloak in pairs(widgetHandler.configData["Auto Cloak Units"].unitdefConfig) do
+			if not unitSet[unitName] or not unitSet[unitName][CMD_WANT_CLOAK] then
+				unitSet[unitName] = unitSet[unitName] or {}
+				unitSet[unitName][CMD_WANT_CLOAK] = cloak and 1 or 0
+			end
+		end
+	end
 end
 
-local clearSound = 'LuaUI/Sounds/switchoff.wav'
-local CMDTYPE_ICON_MODE = CMDTYPE.ICON_MODE
-local isRecordPressed = false
-local isClearPressed = false
-local spawnInitialFrame = Game.spawnInitialFrame
-local spawnWarpInFrame = Game.spawnWarpInFrame
-local spectatingState = select(1, Spring.GetSpectatingState())
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -117,12 +132,22 @@ function widget:Initialize()
 		return
 	end
 
-	widgetHandler:AddAction("stateprefs_record", onRecordPress, nil, "p")
-	widgetHandler:AddAction("stateprefs_record", onRecordRelease, nil, "r")
-	widgetHandler:AddAction("stateprefs_clear", onClearPress, nil, "p")
-	widgetHandler:AddAction("stateprefs_clear", onClearRelease, nil, "r")
-	widgetHandler:AddAction("stateprefs_clearunit", doClearUnit, nil, "p")
-	
+	widgetHandler.actionHandler:AddAction(self, "stateprefs_record", onRecordPress, nil, "p")
+	widgetHandler.actionHandler:AddAction(self, "stateprefs_record", onRecordRelease, nil, "r")
+	widgetHandler.actionHandler:AddAction(self, "stateprefs_clear", onClearPress, nil, "p")
+	widgetHandler.actionHandler:AddAction(self, "stateprefs_clear", onClearRelease, nil, "r")
+	widgetHandler.actionHandler:AddAction(self, "stateprefs_clearunit", doClearUnit, nil, "p")
+
+	WG['stateprefs'] = {}
+	WG['stateprefs'].getUnitDefaultState = function(unitName, cmdID) -- use unitName instead of unitDefID in case of not loaded units (like legion)
+		if unitSet[unitName] then
+			return unitSet[unitName][cmdID]
+		end
+	end
+	WG['stateprefs'].setUnitDefaultState = function(unitName, cmdID, state)
+		unitSet[unitName] = unitSet[unitName] or {}
+		unitSet[unitName][cmdID] = state
+	end
 end
 
 function onRecordPress()
@@ -147,7 +172,7 @@ function doClearUnit()
 	for i = 1, #selectedUnits do
 		local unitID = selectedUnits[i]
 		local unitDefID = spGetUnitDefID(unitID)
-		local name = unitName[unitDefID]
+		local name = uDefID2UnitName[unitDefID]
 		unitSet[name] = {}
 		spEcho("All state prefs removed for unit: " .. name)
 	end
@@ -170,9 +195,9 @@ function widget:CommandNotify(cmdID, cmdParams, cmdOpts)
 	for i = 1, #selectedUnits do
 		local unitID = selectedUnits[i]
 		local unitDefID = spGetUnitDefID(unitID)
-		local name = unitName[unitDefID]
+		local name = uDefID2UnitName[unitDefID]
 		unitSet[name] = unitSet[name] or {}
-		
+
 		if #cmdParams == 1 and isClearPressed then
 			unitSet[name][cmdID] = nil
 			spEcho("State pref removed: " .. name .. ", " .. command.name)
@@ -186,9 +211,9 @@ end
 function widget:UnitCreated(unitID, unitDefID, unitTeam)
 	local cmdOpts = GetCmdOpts(false, false, false, true, false)
 
-	local name = unitName[unitDefID]
+	local name = uDefID2UnitName[unitDefID]
 
-	unitSet[name] = unitSet[unitName[unitDefID]] or {}
+	unitSet[name] = unitSet[uDefID2UnitName[unitDefID]] or {}
 	if unitTeam == Spring.GetMyTeamID() then
 		for cmdID, cmdParam in pairs(unitSet[name]) do
 			if cmdID == 115 then
@@ -209,11 +234,16 @@ local function ApplyUnitStates()
 	end
 end
 
+function widget:KeyPress() -- tests
+	
+	--Spring.Echo(widgetHandler.configData["Auto Cloak Units"])
+end
+
 function widget:GameFrame(n)
 	if Spring.GetGameState then
 		local finishedLoading, loadedFromSave, locallyPaused, lagging = Spring.GetGameState()
 		if loadedFromSave then
-			widgetHandler:RemoveCallIn("GameFrame", self)
+			widgetHandler:RemoveWidgetCallIn("GameFrame", self)
 			return
 		end
 	end
@@ -221,7 +251,7 @@ function widget:GameFrame(n)
 		return
 	end
 	ApplyUnitStates()
-	widgetHandler:RemoveCallIn("GameFrame", self)
+	widgetHandler:RemoveWidgetCallIn("GameFrame", self)
 end
 
 function widget:GameOver()
@@ -229,9 +259,10 @@ function widget:GameOver()
 end
 
 function widget:Shutdown()
-	widgetHandler:RemoveAction("stateprefs_record")
-	widgetHandler:RemoveAction("stateprefs_clear")
-	widgetHandler:RemoveAction("stateprefs_clearunit")
+	WG['stateprefs'] = nil
+	widgetHandler.actionHandler:RemoveAction(self, "stateprefs_record")
+	widgetHandler.actionHandler:RemoveAction(self, "stateprefs_clear")
+	widgetHandler.actionHandler:RemoveAction(self, "stateprefs_clearunit")
 end
 
 --------------------------------------------------------------------------------
