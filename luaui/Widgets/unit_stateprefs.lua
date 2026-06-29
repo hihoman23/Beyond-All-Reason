@@ -106,6 +106,7 @@ local function toggleAllBombersHoldFire(state, force)
 	end
 end
 
+-------------------------------------------------------------------------------------------
 -- The config was previously using a seperate file, but after a bug with this file
 -- it was decided to simply use the widgetHandler shared config instead.
 local function migrateOldConfig()
@@ -158,7 +159,6 @@ function widget:SetConfigData(data)
 		toggleAllBombersHoldFire(unitSet.presets.bombers_default_hold_fire, false)
 	end
 end
-
 
 
 --------------------------------------------------------------------------------
@@ -279,7 +279,7 @@ function widget:CommandNotify(cmdID, cmdParams, cmdOpts)
 		local unitDefID = spGetUnitDefID(unitID)
 		local name = uDefID2UnitName[unitDefID]
 		local prefs = unitSet[name]
-		
+
 		if #cmdParams == 1 and isClearPressed then
 			if prefs and prefs[cmdID] ~= nil then
 				prefs[cmdID] = nil
